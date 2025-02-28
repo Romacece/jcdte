@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Blog avec Firebase</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+
+    <div class="container mt-5">
+        <!-- Formulaire de connexion/inscription -->
+        <div id="auth-container" class="card p-4 shadow-lg">
+            <h2 id="auth-title" class="text-center">Connexion</h2>
+            <div id="alert-container"></div>
+            <input type="email" id="email" class="form-control my-2" placeholder="Email">
+            <input type="password" id="password" class="form-control my-2" placeholder="Mot de passe">
+            <button id="auth-btn" class="btn btn-primary w-100">Se connecter</button>
+            <p class="text-center mt-3">
+                <a href="#" id="toggle-auth">Créer un compte</a>
+            </p>
+        </div>
+
+        <!-- Interface principale après connexion -->
+        <div id="main-container" class="mt-5" style="display: none;">
+            <button id="logoutBtn" class="btn btn-danger">Se déconnecter</button>
+
+            <h2 class="mt-4">Articles récents</h2>
+            <button id="show-form-btn" class="btn btn-success">Ajouter un article</button>
+            
+            <!-- Formulaire d'ajout caché au début -->
+            <div id="add-article-form" class="mt-3 card p-3 shadow-sm" style="display: none;">
+                <input type="text" id="title" class="form-control my-2" placeholder="Titre">
+                <textarea id="content" class="form-control my-2" placeholder="Contenu"></textarea>
+                <input type="file" id="image" class="form-control my-2">
+                <button id="publishBtn" class="btn btn-primary w-100">Publier</button>
+            </div>
+
+            <div id="articles" class="mt-4 row"></div>
+        </div>
+    </div>
+
+    <script type="module">
+        // Importation Firebase
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+        import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, getDocs, doc, updateDoc, deleteDoc, Timestamp  } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+        import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-storage.js";
+
+        // Configuration Firebase
+        const firebaseConfig = {
+            apiKey: "AIzaSyDGtTLbvULERyyKS4zUpsRPODVa_PDunxs",
+            authDomain: "jcdte-9b586.firebaseapp.com",
+            projectId: "jcdte-9b586",
+            storageBucket: "jcdte-9b586.firebasestorage.app",
+            messagingSenderId: "519533993781",
+            appId: "1:519533993781:web:7da68cf041583a204cb67c",
+            measurementId: "G-Y2PF7P2CG2"
+        };
+
+        // Initialisation Firebase
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const storage = getStorage(app);
+
+        // Sélection des éléments HTML
+        const authContainer = document.getElementById("auth-container");
+        const mainContainer = document.getElementById("main-container");
+        const authTitle = document.getElementById("auth-title");
+        const authBtn = document.getElementById("auth-btn");
+        const toggleAuth = document.getElementById("toggle-auth");
+        const emailInput = document.getElementById("email");
+        const passwordInput = document.getElementById("password");
+        const alertContainer = document.getElementById("alert-container");
+        const logoutBtn = document.getElementById("logoutBtn");
+        const publishBtn = document.getElementById("publishBtn");
+        const articlesDiv = document.getElementById("articles");
+        const addArticleForm = document.getElementById("add-article-form");
+        const showFormBtn = document.getElementById("show-form-btn");
+        const imageInput = document.getElementById("image");
+
+        let isSignUp = false;
+
+        // Basculer entre connexion et inscription
+        toggleAuth.addEventListener("click", () => {
+            isSignUp = !isSignUp;
+            authTitle.innerText = isSignUp ? "Créer un compte" : "Connexion";
+            authBtn.innerText = isSignUp ? "S'inscrire" : "Se connecter";
+            toggleAuth.innerText = isSignUp ? "J'ai déjà un compte" : "Créer un compte";
+        });
+
+        // Gestion de l'authentification
+        authBtn.addEventListener("click", async () => {
+            try {
+                if (isSignUp) {
+                    await createUserWithEmailAndPassword(auth, emailInput.value, passwordInput.value);
+                    showAlert("Compte créé avec succès !", "success");
+                } else {
+                    await signInWithEmailAndPassword(auth, emailInput.value, passwordInput.value);
+                    showAlert("Connexion réussie !", "success");
+                }
+            } catch (error) {
+                showAlert(error.message, "danger");
+            }
+        });
+
+        // Vérification de l'utilisateur connecté
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                authContainer.style.display = "none";
+                mainContainer.style.display = "block";
+                loadArticles();
+            } else {
+                authContainer.style.display = "block";
+                mainContainer.style.display = "none";
+            }
+        });
+
+        // Déconnexion
+        logoutBtn.addEventListener("click", async () => {
+            await signOut(auth);
+            showAlert("Déconnexion réussie !", "success");
+        });
+
+        // Ajouter un article
+        publishBtn.addEventListener("click", async () => {
+            const user = auth.currentUser;
+            if (!user) return;
+
+            try {
+                // Télécharger l'image
+                const imageFile = document.getElementById("image").files[0];
+                const storageRef = ref(storage, `articles/${Date.now()}-${imageFile.name}`);
+                await uploadBytes(storageRef, imageFile);
+                const imageUrl = await getDownloadURL(storageRef);
+
+                // Enregistrer l'article dans Firestore
+                await addDoc(collection(db, "articles"), {
+                    title: document.getElementById("title").value,
+                    content: document.getElementById("content").value,
+                    imageUrl: imageUrl,
+                    userId: user.uid,
+                    createdAt: Timestamp.now()
+                });
+                showAlert("Article publié avec succès !", "success");
+                document.getElementById("title").value = "";
+                document.getElementById("content").value = "";
+                document.getElementById("image").value = "";
+                addArticleForm.style.display = "none";
+                loadArticles();
+            } catch (error) {
+                showAlert(error.message, "danger");
+            }
+        });
+
+        // Afficher les articles
+        async function loadArticles() {
+            const querySnapshot = await getDocs(collection(db, "articles"));
+            articlesDiv.innerHTML = "";
+            querySnapshot.forEach((doc) => {
+                const article = doc.data();
+                articlesDiv.innerHTML += `
+                    <div class="col-md-4 mb-4">
+                        <div class="card">
+                            <img src="assets/img/about-2.jpg" class="card-img-top" alt="${article.title}">
+                            <div class="card-body">
+                                <h5 class="card-title">${article.title}</h5>
+                                <p class="card-text">${article.content}</p>
+                                <p class="card-text"><small class="text-muted">Publié le ${article.createdAt ? new Date(article.createdAt.toDate()).toLocaleString() : ''}</small></p>
+                                <div class="d-flex justify-content-end">
+                                    <button class="btn btn-primary me-2 edit-btn" data-id="${doc.id}">Modifier</button>
+                                    <button class="btn btn-danger delete-btn" data-id="${doc.id}">Supprimer</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+
+            // Ajouter les écouteurs d'événements pour la modification et la suppression
+            const editBtns = document.querySelectorAll(".edit-btn");
+            const deleteBtns = document.querySelectorAll(".delete-btn");
+            editBtns.forEach((btn) => {
+                btn.addEventListener("click", editArticle);
+            });
+            deleteBtns.forEach((btn) => {
+                btn.addEventListener("click", deleteArticle);
+            });
+        }
+
+        // Modifier un article
+        async function editArticle(e) {
+            const articleId = e.target.dataset.id;
+            const articleRef = doc(db, "articles", articleId);
+            const articleSnapshot = await getDoc(articleRef);
+            const article = articleSnapshot.data();
+
+            document.getElementById("title").value = article.title;
+            document.getElementById("content").value = article.content;
+            document.getElementById("image").value = "";
+            addArticleForm.style.display = "block";
+
+            publishBtn.removeEventListener("click", publishBtn.listener);
+            publishBtn.listener = async () => {
+                try {
+                    // Télécharger l'image (si une nouvelle a été sélectionnée)
+                    const imageFile = document.getElementById("image").files[0];
+                    let imageUrl = article.imageUrl;
+                    if (imageFile) {
+                        const storageRef = ref(storage, `articles/${Date.now()}-${imageFile.name}`);
+                        await uploadBytes(storageRef, imageFile);
+                        imageUrl = await getDownloadURL(storageRef);
+                    }
+
+                    // Mettre à jour l'article dans Firestore
+                    await updateDoc(articleRef, {
+                        title: document.getElementById("title").value,
+                        content: document.getElementById("content").value,
+                        imageUrl: imageUrl
+                    });
+                    showAlert("Article mis à jour avec succès !", "success");
+                    document.getElementById("title").value = "";
+                    document.getElementById("content").value = "";
+                    document.getElementById("image").value = "";
+                    addArticleForm.style.display = "none";
+                    loadArticles();
+                } catch (error) {
+                    showAlert(error.message, "danger");
+                }
+            };
+            publishBtn.addEventListener("click", publishBtn.listener);
+        }
+
+        // Supprimer un article
+        async function deleteArticle(e) {
+            const articleId = e.target.dataset.id;
+            const articleRef = doc(db, "articles", articleId);
+            try {
+                await deleteDoc(articleRef);
+                showAlert("Article supprimé avec succès !", "success");
+                loadArticles();
+            } catch (error) {
+                showAlert(error.message, "danger");
+            }
+        }
+
+        // Gérer l'affichage du formulaire d'ajout
+        showFormBtn.addEventListener("click", () => {
+            addArticleForm.style.display = addArticleForm.style.display === "none" ? "block" : "none";
+        });
+
+        // Afficher une alerte Bootstrap
+        function showAlert(message, type) {
+            alertContainer.innerHTML = `<div class="alert alert-${type}">${message}</div>`;
+            setTimeout(() => alertContainer.innerHTML = "", 3000);
+        }
+    </script>
+
+</body>
+</html>
